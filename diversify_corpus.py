@@ -133,6 +133,9 @@ def word_2_vec(path, model_path, minimum_profile_size=0):
     
     vectorized_documents_id = dict()
     
+    # Reverse lookup table {document string : document ID}
+    reverse_document_id_lookup = dict()
+    
     total_user_profiles = len(data)
     current = 1
     
@@ -149,7 +152,21 @@ def word_2_vec(path, model_path, minimum_profile_size=0):
             continue
 
         # Tokenize the list of documents
-        documents = [f"{item['title']} {item['text']}" for item in user_profile]
+        documents = []
+        for item in user_profile:
+            document_string = f"{item['title']} {item['text']}"
+            documents.append(document_string)
+            # Depending on which task, we need to encapsulate different data in the reverse lookup
+            if which_task == 2:
+                reverse_document_id_lookup[document_string] = {'title' : item['title'],
+                                                             'text'  : item['text'],
+                                                             'category' : item['category'],
+                                                            'id'    : item['id']}
+            else:
+                reverse_document_id_lookup[document_string] = {'title' : item['title'],
+                                                                'text'  : item['text'],
+                                                                'id'    : item['id']}
+            
         tokenized_documents = [doc.split(" ") for doc in documents]
         
         vectorized_docs = vectorize(tokenized_documents, model=model)
@@ -158,7 +175,7 @@ def word_2_vec(path, model_path, minimum_profile_size=0):
         docs[id] = documents
         tokenized_docs[id] = tokenized_documents
         
-    return vectorized_documents_id, tokenized_docs, docs
+    return vectorized_documents_id, tokenized_docs, docs, reverse_document_id_lookup
 
 def mbkmeans_clusters(
 	X, 
@@ -231,7 +248,7 @@ def main():
         print(f"Vector Size: {size_of_vector}")
     
         # Find the document vectors for the preprocessed dataset
-        user_document_vectors, tokenized_docs, docs = word_2_vec(f"processed_data/lamp{which_task}/validate/questions.json", f"models/lamp{which_task}/{size_of_vector}.bin", minimum_profile_size=100)
+        user_document_vectors, tokenized_docs, docs, reverse_lookup = word_2_vec(f"processed_data/lamp{which_task}/validate/questions.json", f"models/lamp{which_task}/{size_of_vector}.bin", minimum_profile_size=100)
         
         which_id = 1
         # Form the clusters based on the document vectors
