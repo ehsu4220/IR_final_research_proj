@@ -30,21 +30,29 @@ np.random.seed(SEED)
 # 1: vectors
 # 2: number of clusters
 # 3: Mini-batch size
-which_hyperparam = 2
-which_task = 4
+which_hyperparam = 0
+which_task = 2
 
 lamp2_vector_sizes = [140]
-lamp2_cluster_numbers = [14]
+lamp2_cluster_numbers = [10]
 lamp2_cluster_sizes = [32]
 
 lamp4_vector_sizes = [220]
-lamp4_cluster_numbers = [14]
+lamp4_cluster_numbers = [9]
+lamp4_cluster_sizes = [32]
 
-# For Lamp2
-vector_sizes = [220] # Settled on 140, maximized inertia
-cluster_numbers = list(range(2, 36))
-cluster_sizes = [32] # mb
+# Settings for hyperparams
+if which_task == 2:
+    vector_sizes = lamp2_vector_sizes # Settled on 140, maximized inertia
+    cluster_numbers = lamp2_cluster_numbers
+    cluster_sizes = lamp2_cluster_sizes # mb
+else:
+    vector_sizes = lamp4_vector_sizes
+    cluster_numbers = lamp4_cluster_numbers
+    cluster_sizes = lamp4_cluster_sizes
 
+# Percentages of original corpus to maintain
+percentage_to_keep = [.10, .20, .30, .40, .50, .60, .70, .80, .90]
 
 # Tables from hyperparameter tuning
 model_vector_tuning_headers = ['# of Model Vectors', 'Inertia', 'Silhouette coefficient']
@@ -248,6 +256,11 @@ def main():
                         "tokens": [" ".join(text) for text in tokenized_docs[id]],
                         "cluster": cluster_labels
                     })
+                    
+                    # begin formulating the reduced corpus with the clustering and cluster labels:
+                    
+                    
+                    
         print("--------------------------------------------------------------------------------------------------------------------------")
 
     # Save the results of hyperparameter tuning
@@ -279,7 +292,7 @@ def main():
             file.write(num_clusters_table_string)
     
     # ## Mini batch size
-    elif which_hyperparam == 1:
+    elif which_hyperparam == 3:
         mini_batch_table = PrettyTable()
         mini_batch_table.field_names = mini_batch_headers
         for key in sorted(average_inertias.keys()):
@@ -288,7 +301,7 @@ def main():
                 sum(average_silhouette[key]) / len(average_silhouette[key])]
             mini_batch_table.add_row(row)
         mini_batch_table_string = mini_batch_table.get_string()
-        with open(f"tuning/{which_task}/mini_batch_tuning.txt", 'w') as file:
+        with open(f"tuning/lamp{which_task}/mini_batch_tuning.txt", 'w') as file:
             file.write(mini_batch_table_string)
 
 if __name__ == '__main__':
