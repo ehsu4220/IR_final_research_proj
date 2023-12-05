@@ -100,8 +100,10 @@ def main():
     ## Results are saved into json files in processed_data/ in order to avoid the need to constantly process this.
     #process_questions("data/lamp2/train/questions.json", "processed_data/lamp2/train/questions.json")
     #process_questions("data/lamp4/train/questions.json", "processed_data/lamp4/train/questions.json")
-    process_questions("data/lamp2/validate/questions.json", "processed_data/lamp2/validate/questions.json")
-    process_questions("data/lamp4/validate/questions.json", "processed_data/lamp4/validate/questions.json")
+    #process_questions("data/lamp2/validate/questions.json", "processed_data/lamp2/validate/questions.json")
+    #process_questions("data/lamp4/validate/questions.json", "processed_data/lamp4/validate/questions.json")
+    process_questions("data/lamp2/test/questions.json", "processed_data/lamp2/test/questions.json")
+    process_questions("data/lamp4/test/questions.json", "processed_data/lamp4/test/questions.json")
 
     # # Outputs
     # lamp2_outputs = process_outputs("data/lamp2/train/outputs.json")
