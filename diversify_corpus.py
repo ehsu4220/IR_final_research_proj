@@ -31,25 +31,26 @@ np.random.seed(SEED)
 # 2: number of clusters
 # 3: Mini-batch size
 which_hyperparam = 0
-which_task = 2
+which_task = 4
+which_set = 'train'
 
 lamp2_vector_sizes = [140]
 lamp2_cluster_numbers = [10]
-lamp2_cluster_sizes = [32]
+lamp2_cluster_sizes = [128]
 
 lamp4_vector_sizes = [220]
 lamp4_cluster_numbers = [9]
-lamp4_cluster_sizes = [32]
+lamp4_cluster_sizes = [128]
 
 # Settings for hyperparams
-if which_task == 2:
-    vector_sizes = lamp2_vector_sizes # Settled on 140, maximized inertia
-    cluster_numbers = lamp2_cluster_numbers
-    cluster_sizes = lamp2_cluster_sizes # mb
-else:
-    vector_sizes = lamp4_vector_sizes
+if which_task == 4:
+    vector_sizes = lamp4_vector_sizes # Settled on 140, maximized inertia
     cluster_numbers = lamp4_cluster_numbers
-    cluster_sizes = lamp4_cluster_sizes
+    cluster_sizes = lamp4_cluster_sizes # mb
+else:
+    vector_sizes = lamp2_vector_sizes
+    cluster_numbers = lamp2_cluster_numbers
+    cluster_sizes = lamp2_cluster_sizes
 
 # Percentages of original corpus to maintain
 percentage_to_keep = [.10, .20, .30, .40, .50, .60, .70, .80, .90]
@@ -141,11 +142,13 @@ def word_2_vec(path, model_path, minimum_profile_size=0):
     
     docs = dict()
     tokenized_docs = dict()
+    inputs = dict()
     
     for id in data:
         # print(f"{current}/{total_user_profiles}")
         current += 1
         user_profile = data[id][1]
+        inputs[id] = data[id][0]
         
         # Skip user profiles with not enough documents to cluster        
         if len(user_profile) < minimum_profile_size:
@@ -153,17 +156,18 @@ def word_2_vec(path, model_path, minimum_profile_size=0):
 
         # Tokenize the list of documents
         documents = []
+        reverse_document_id_lookup[id] = dict()
         for item in user_profile:
             document_string = f"{item['title']} {item['text']}"
             documents.append(document_string)
             # Depending on which task, we need to encapsulate different data in the reverse lookup
             if which_task == 2:
-                reverse_document_id_lookup[document_string] = {'title' : item['title'],
+                reverse_document_id_lookup[id][document_string] = {'title' : item['title'],
                                                              'text'  : item['text'],
                                                              'category' : item['category'],
                                                             'id'    : item['id']}
             else:
-                reverse_document_id_lookup[document_string] = {'title' : item['title'],
+                reverse_document_id_lookup[id][document_string] = {'title' : item['title'],
                                                                 'text'  : item['text'],
                                                                 'id'    : item['id']}
             
@@ -175,7 +179,7 @@ def word_2_vec(path, model_path, minimum_profile_size=0):
         docs[id] = documents
         tokenized_docs[id] = tokenized_documents
         
-    return vectorized_documents_id, tokenized_docs, docs, reverse_document_id_lookup
+    return vectorized_documents_id, tokenized_docs, docs, reverse_document_id_lookup, inputs
 
 def mbkmeans_clusters(
 	X, 
@@ -242,13 +246,16 @@ def mbkmeans_clusters(
 
 def main():
     
+    # Initialize new corpi to save 
+    reduced_corpi = {percent : dict() for percent in percentage_to_keep}
+    
     # Test performance of the different models with different amounts of vectors
     for size_of_vector in vector_sizes: # settled on 80 for vector size
     
         print(f"Vector Size: {size_of_vector}")
     
         # Find the document vectors for the preprocessed dataset
-        user_document_vectors, tokenized_docs, docs, reverse_lookup = word_2_vec(f"processed_data/lamp{which_task}/validate/questions.json", f"models/lamp{which_task}/{size_of_vector}.bin", minimum_profile_size=100)
+        user_document_vectors, tokenized_docs, docs, reverse_lookup, inputs = word_2_vec(f"processed_data/lamp{which_task}/{which_set}/questions.json", f"models/lamp{which_task}/{size_of_vector}.bin", minimum_profile_size=100)
         
         which_id = 1
         # Form the clusters based on the document vectors
@@ -275,10 +282,36 @@ def main():
                     })
                     
                     # begin formulating the reduced corpus with the clustering and cluster labels:
+                    # Use the reverse document lookup object that is ordered by instance ID, then preprocessed text key
                     
+                    # Group the documents based on cluster
+                    clustered_documents = dict()
+                    for i in range(len(docs[id])):
+                        if cluster_labels[i] not in clustered_documents.keys():
+                            clustered_documents[cluster_labels[i]] = []
+                        clustered_documents[cluster_labels[i]].append(docs[id][i])
+                        
+                    # Formulate new datasets in the form {user_id : [ input, [{new_userprofile}] ]}
+                    for percentage in percentage_to_keep:
+                        current_user_profile = []
+                        for cluster_label in clustered_documents:
+                            num_to_choose = int(len(clustered_documents[cluster_label]) * percentage)
+                            chosen_elements = random.sample(clustered_documents[cluster_label], num_to_choose)
+                            
+                            # form part of the user profile with the clusters
+                            user_profile_cluster = [reverse_lookup[id][element] for element in chosen_elements]
+                            current_user_profile.extend(user_profile_cluster)
+                        
+                        reduced_corpi[percentage][id] = [inputs[id], current_user_profile]
                     
-                    
-        print("--------------------------------------------------------------------------------------------------------------------------")
+                    print('debug')
+        
+        print('debug all reduced corpi made')
+        for corpus in reduced_corpi:
+            with open(f'reduced_corpus/lamp{which_task}/{which_set}/question_{corpus}.json', 'w') as file:
+                json.dump(reduced_corpi[corpus], file)
+        
+
 
     # Save the results of hyperparameter tuning
     ## Vector size
