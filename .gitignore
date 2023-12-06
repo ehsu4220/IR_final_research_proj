@@ -1,0 +1,4 @@
+llm_tuning/
+data/
+processed_data/
+.idea/
