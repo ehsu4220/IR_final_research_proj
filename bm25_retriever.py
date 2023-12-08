@@ -1,5 +1,7 @@
 from rank_bm25 import BM25Okapi
 
+import metrics
+
 import json
 import nltk
 from nltk.tokenize import word_tokenize
@@ -10,11 +12,17 @@ from collections import defaultdict
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
+import matplotlib.pyplot as plt
+
 # NLTK setup
 nltk.download('punkt')
 nltk.download('stopwords')
 stemmer = PorterStemmer()
 stop_words = set(stopwords.words('english'))
+
+# code parameters
+current_task = 2
+min_profile_size = 25
 
 # Helper function that handled normalization, stemming, and stopwords
 def preprocess_text(text):
@@ -68,7 +76,8 @@ def process_outputs(path):
 def retrieve_relevant_k_docs(input, user_profile, k=20, minimum_profile_size=100):
 
     if k > minimum_profile_size or len(user_profile) < minimum_profile_size:
-        return -1
+        print(len(user_profile))
+        return -1, -1, -1
 
     # Tokenize the list of documents
     documents = [f"{item['title']} {item['text']}" for item in user_profile]
@@ -88,10 +97,14 @@ def retrieve_relevant_k_docs(input, user_profile, k=20, minimum_profile_size=100
     # retrieve documents
     retrieved_documents = bm25.get_top_n(tokenized_input, documents, k)
     
+    # Get all relevancy scores and generate lookup table for relevancy scores
+    document_relevancy = bm25.get_scores(tokenized_input)
+    document_relevance_index = dict()
+    for i in range(len(documents)):
+        document_relevance_index[documents[i]] = document_relevancy[i]
+    
     # return the IDs associated with top k
-    return [reverse_document_lookup[key][0] for key in retrieved_documents if key in reverse_document_lookup]
-    
-    
+    return [reverse_document_lookup[key][0] for key in retrieved_documents if key in reverse_document_lookup], retrieved_documents, document_relevance_index
 
 
 def main():
@@ -102,24 +115,91 @@ def main():
     #process_questions("data/lamp4/train/questions.json", "processed_data/lamp4/train/questions.json")
     #process_questions("data/lamp2/validate/questions.json", "processed_data/lamp2/validate/questions.json")
     #process_questions("data/lamp4/validate/questions.json", "processed_data/lamp4/validate/questions.json")
-    process_questions("data/lamp2/test/questions.json", "processed_data/lamp2/test/questions.json")
-    process_questions("data/lamp4/test/questions.json", "processed_data/lamp4/test/questions.json")
+    # process_questions("data/lamp2/test/questions.json", "processed_data/lamp2/test/questions.json")
+    # process_questions("data/lamp4/test/questions.json", "processed_data/lamp4/test/questions.json")
 
     # # Outputs
     # lamp2_outputs = process_outputs("data/lamp2/train/outputs.json")
     # lamp4_outputs = process_outputs("data/lamp4/train/outputs.json")
     
     # load the preprocessed user profiles
-    # with open("processed_data/lamp2/train/questions.json", 'r') as lamp2_train:
-    #     data = json.load(lamp2_train)
+    percentages = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
     
-    # for id in data:
-        # retrieved_documents_ids = retrieve_relevant_k_docs(data[id][0], data[id][1])
+    dcg_percentage = dict()
+    
+    for percentage in percentages:
+        with open(f"processed_data/lamp{current_task}/test/questions.json", 'r') as whole_corpus:
+            data = json.load(whole_corpus)
         
-        # Retrieve the text associated with the profile and save somewhere for later fine-tuning on the LLM
+        with open(f"reduced_corpus/lamp{current_task}/test/question_{percentage}.json", 'r') as reduced_corpus:
+            reduced_data = json.load(reduced_corpus)
+        
+        k_values = [5, 10, 15, 20]
+        
+        # Retrieve the text associated with the profile and generate metric results
+        dcg_k = dict()
+        for k in k_values:
+            dcg_k[k] = []
+            for id in reduced_data:
+                _, whole_retrieved_doc_ids, whole_relevant_scores = retrieve_relevant_k_docs(data[id][0], data[id][1], k=k, minimum_profile_size=min_profile_size)
+                _, reduced_retrieved_doc_ids, reduced_relevant_scores = retrieve_relevant_k_docs(reduced_data[id][0], reduced_data[id][1], k=k, minimum_profile_size=min_profile_size)
+                
+                if whole_retrieved_doc_ids == -1 or reduced_retrieved_doc_ids == -1:
+                    print("retrieval failed")
+                    continue
+                
+                # Perform the comparison of the DCG
+                result = metrics.reduced_corpus_dcg_ratio(reduced_relevant_scores, whole_relevant_scores, reduced_retrieved_doc_ids, whole_retrieved_doc_ids)
+                if result == -1:
+                    print("metric failed")
+                    continue
+                else:
+                    dcg_k[k].append(result)
+                    
+        # Average out each list of DCG ratios
+        for key in dcg_k:
+            dcg_k[key] = sum(dcg_k[key]) / len(dcg_k[key])
+        print("debug")
+        
+        dcg_percentage[percentage] = dcg_k
     
-    # Form (input, output) pairs.
-    print("debug")
+    # Generate graph for the different plots
+    # plt.figure()
+    # for percentage in percentages:
+    #     x_values = list(dcg_percentage[percentage].keys())
+    #     y_values = list(dcg_percentage[percentage].values())
+    #     plt.plot(x_values, y_values, marker='o', linestyle='-', label=percentage)
+    
+    # plt.xlabel('Top K')
+    # plt.ylabel('DCG ratio')
+    # plt.title(f'DCG performance of Varying Sized User Profiles: Minimum Size = {min_profile_size}')
+    # plt.legend()
+    
+    # plt.ylim(0, 1)
+    
+    # plt.grid(True)
+    # plt.show()
+    
+    k_values = set(k_val for percentages in dcg_percentage.values() for k_val in percentages.keys())
+    
+    plt.figure()
+    
+    for k in k_values:
+        x_values = list(dcg_percentage.keys())
+        y_values = [percentages[k] for percentages in dcg_percentage.values()]
+        
+        plt.plot(x_values, y_values, marker='o', label=f'k={k}')
+        
+    plt.xlabel('Percentage of Original Corpus')
+    plt.ylabel('DCG Ratio')
+    plt.title(f'DCG performance of Varying Sized User Profiles: Minimum Size = {min_profile_size}')
+    plt.legend()
+    
+    plt.ylim(0, 1)
+    plt.xlim(0, 1)
+    plt.grid(True)
+    plt.show()
+        
 
 if __name__ == '__main__':
     main()
