@@ -8,8 +8,10 @@ import json
 
 MODEL_NAME = "google/flan-t5-base"
 tokenizer = tf.T5Tokenizer.from_pretrained(MODEL_NAME)
-model = tf.T5ForConditionalGeneration.from_pretrained(MODEL_NAME)
-collator = tf.DataCollatorForSeq2Seq(tokenizer=tokenizer, model=model)
+llm2_model = tf.T5ForConditionalGeneration.from_pretrained(MODEL_NAME)
+llm4_model = tf.T5ForConditionalGeneration.from_pretrained(MODEL_NAME)
+llm2_collator = tf.DataCollatorForSeq2Seq(tokenizer=tokenizer, model=llm2_model)
+llm4_collator = tf.DataCollatorForSeq2Seq(tokenizer=tokenizer, model=llm4_model)
 
 N_PROFILE = 5
 
@@ -29,7 +31,7 @@ class ForT5Dataset:
         return {"input_ids": input_ids, "labels": target_ids}
 
 
-def llm_preprocess(questions, labels):
+def llm2_preprocess(questions, labels):
     history_prefix = "This user's recent history is: "
     history_suffix = " Using this information for context only, "
     inputs = []
@@ -45,9 +47,25 @@ def llm_preprocess(questions, labels):
 
     return ForT5Dataset(inputs, labels)
 
+def llm4_preprocess(questions, labels):
+    history_prefix = "This user's recent titles were: "
+    history_suffix = ". Using this information for context only, "
+    inputs = []
+    labels = [output['output'] for output in labels]
+    for question in questions:
+        profile = question['profile']
+        titles = ["title: " + item['title'] for item in profile]
+        model_input = history_prefix + ". ".join(titles[:N_PROFILE]) + history_suffix + question['input']
+        inputs.append(model_input)
+        #print(model_input)
+
+    inputs = tokenizer(inputs, max_length=512, truncation=True)
+    labels = tokenizer(text_target=labels, max_length=512, truncation=True)
+
+    return ForT5Dataset(inputs, labels)
+
 
 # Scoring
-
 nltk.download("punkt", quiet=True)
 metric = evaluate.load("rouge")
 
@@ -62,28 +80,37 @@ def evaluate_metrics(predictions):
     rouge_metric = metric.compute(predictions=decoded_preds, references=decoded_labels, use_stemmer=True)
     return rouge_metric
 
+# Helper fn for the data loads
+def json_file_load(path):
+    with open(path, 'r') as file:
+        out = json.load(file)
+        file.close()
+    return out
 
 
-with open("data/lamp2/train/outputs.json", 'r') as file:
-    l2out = json.load(file)
-    file.close()
-with open("data/lamp2/train/questions.json", "r") as file:
-    l2in = json.load(file)
-    file.close()
-# Process the json
+l2out = json_file_load("data/lamp2/train/outputs.json")
+l2in = json_file_load("data/lamp2/train/questions.json")
 outputs = l2out['golds']
 
-with open("data/lamp2/validate/outputs.json", 'r') as file:
-    l2tout = json.load(file)
-    file.close()
-with open("data/lamp2/validate/questions.json", "r") as file:
-    l2tin = json.load(file)
-    file.close()
-test_outputs = l2tout['golds']
+l2Vout = json_file_load("data/lamp2/validate/outputs.json")
+l2Vin = json_file_load("data/lamp2/validate/questions.json")
+test_outputs = l2Vout['golds']
+
+l4out = json_file_load("data/lamp4/train/outputs.json")
+l4in = json_file_load("data/lamp4/train/questions.json")
+l4outputs = l4out['golds']
 
 
-preprocessed_data_train = llm_preprocess(l2in, outputs)
-preprocessed_data_test = llm_preprocess(l2tin, test_outputs)
+l4Vout = json_file_load("data/lamp4/validate/outputs.json")
+l4Vin = json_file_load("data/lamp4/validate/questions.json")
+l4Voutputs = l4Vout['golds']
+
+preprocessed_data_train = llm2_preprocess(l2in, outputs)
+preprocessed_data_test = llm2_preprocess(l2Vin, test_outputs)
+
+llm4_preprocessed_data_train = llm4_preprocess(l4in, l4outputs)
+llm4_preprocessed_data_test = llm4_preprocess(l4Vin, l4Voutputs)
+
 
 # Global Parameters
 L_RATE = 1e-5
@@ -91,7 +118,7 @@ BATCH_SIZE = 8
 PER_DEVICE_EVAL_BATCH = 4
 WEIGHT_DECAY = 0.01
 SAVE_TOTAL_LIM = 5
-NUM_EPOCHS = 100
+NUM_EPOCHS = 120
 
 training_args = tf.Seq2SeqTrainingArguments(
     output_dir="./llm_tuning",
@@ -107,13 +134,24 @@ training_args = tf.Seq2SeqTrainingArguments(
     push_to_hub=False,
     load_best_model_at_end=True
 )
-trainer = tf.Seq2SeqTrainer(
-    model=model,
+llm2_trainer = tf.Seq2SeqTrainer(
+    model=llm2_model,
     args=training_args,
     train_dataset=preprocessed_data_train,
     eval_dataset=preprocessed_data_test,
     tokenizer=tokenizer,
-    data_collator=collator,
+    data_collator=llm2_collator,
     compute_metrics=evaluate_metrics
 )
-trainer.train()
+llm4_trainer = tf.Seq2SeqTrainer(
+    model=llm4_model,
+    args=training_args,
+    train_dataset=llm4_preprocessed_data_train,
+    eval_dataset=llm4_preprocessed_data_test,
+    tokenizer=tokenizer,
+    data_collator=llm4_collator,
+    compute_metrics=evaluate_metrics
+)
+
+#llm4_trainer.train()
+

@@ -2,3 +2,6 @@ llm_tuning/
 data/
 processed_data/
 .idea/
+reduced_corpus/
+tuned_llms/
+__pycache__/
