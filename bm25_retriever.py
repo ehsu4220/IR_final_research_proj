@@ -13,6 +13,7 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
 import matplotlib.pyplot as plt
+import pandas as pd
 
 # NLTK setup
 nltk.download('punkt')
@@ -22,7 +23,6 @@ stop_words = set(stopwords.words('english'))
 
 # code parameters
 current_task = 2
-min_profile_size = 25
 
 # Helper function that handled normalization, stemming, and stopwords
 def preprocess_text(text):
@@ -123,46 +123,73 @@ def main():
     # lamp4_outputs = process_outputs("data/lamp4/train/outputs.json")
     
     # load the preprocessed user profiles
-    percentages = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
+    percentages = [0.5, 0.6, 0.7, 0.8, 0.9]
+    minimum_sizes = [50, 100, 150, 200, 250]
+    k_values = [5, 10, 15, 20]
     
-    dcg_percentage = dict()
+    final_table = dict()
+    for min_size in minimum_sizes:
     
-    for percentage in percentages:
-        with open(f"processed_data/lamp{current_task}/test/questions.json", 'r') as whole_corpus:
-            data = json.load(whole_corpus)
-        
-        with open(f"reduced_corpus/lamp{current_task}/test/question_{percentage}.json", 'r') as reduced_corpus:
-            reduced_data = json.load(reduced_corpus)
-        
-        k_values = [5, 10, 15, 20]
-        
-        # Retrieve the text associated with the profile and generate metric results
-        dcg_k = dict()
-        for k in k_values:
-            dcg_k[k] = []
-            for id in reduced_data:
-                _, whole_retrieved_doc_ids, whole_relevant_scores = retrieve_relevant_k_docs(data[id][0], data[id][1], k=k, minimum_profile_size=min_profile_size)
-                _, reduced_retrieved_doc_ids, reduced_relevant_scores = retrieve_relevant_k_docs(reduced_data[id][0], reduced_data[id][1], k=k, minimum_profile_size=min_profile_size)
-                
-                if whole_retrieved_doc_ids == -1 or reduced_retrieved_doc_ids == -1:
-                    print("retrieval failed")
-                    continue
-                
-                # Perform the comparison of the DCG
-                result = metrics.reduced_corpus_dcg_ratio(reduced_relevant_scores, whole_relevant_scores, reduced_retrieved_doc_ids, whole_retrieved_doc_ids)
-                if result == -1:
-                    print("metric failed")
-                    continue
-                else:
-                    dcg_k[k].append(result)
+        dcg_percentage = dict()
+        for percentage in percentages:
+            with open(f"processed_data/lamp{current_task}/test/questions.json", 'r') as whole_corpus:
+                data = json.load(whole_corpus)
+            
+            with open(f"reduced_corpus/lamp{current_task}/test/question_{percentage}.json", 'r') as reduced_corpus:
+                reduced_data = json.load(reduced_corpus)
+            
+            # Retrieve the text associated with the profile and generate metric results
+            dcg_k = dict()
+            for k in k_values:
+                dcg_k[k] = []
+                for id in reduced_data:
+                    _, whole_retrieved_doc_ids, whole_relevant_scores = retrieve_relevant_k_docs(data[id][0], data[id][1], k=k, minimum_profile_size=min_size)
+                    _, reduced_retrieved_doc_ids, reduced_relevant_scores = retrieve_relevant_k_docs(reduced_data[id][0], reduced_data[id][1], k=k, minimum_profile_size=min_size)
                     
-        # Average out each list of DCG ratios
-        for key in dcg_k:
-            dcg_k[key] = sum(dcg_k[key]) / len(dcg_k[key])
-        print("debug")
+                    if whole_retrieved_doc_ids == -1 or reduced_retrieved_doc_ids == -1:
+                        print("retrieval failed")
+                        continue
+                    
+                    # Perform the comparison of the DCG
+                    result = metrics.reduced_corpus_dcg_ratio(reduced_relevant_scores, whole_relevant_scores, reduced_retrieved_doc_ids, whole_retrieved_doc_ids)
+                    if result == -1:
+                        print("metric failed")
+                        continue
+                    else:
+                        dcg_k[k].append(result)
+                        
+            # Average out each list of DCG ratios
+            for key in dcg_k:
+                dcg_k[key] = sum(dcg_k[key]) / len(dcg_k[key])
+            print("debug")
+            
+            dcg_percentage[percentage] = dcg_k
         
-        dcg_percentage[percentage] = dcg_k
+        final_table[min_size] = dcg_percentage
     
+    # Generate graph with fixed K for X = minimum values, y for Metric
+    for k in k_values:
+        plt.figure()
+        for percentage in percentages:
+            x_values = []
+            y_values = []
+            for min_profile_size in minimum_sizes:
+                x_values.append(min_profile_size)
+                y_values.append(final_table[min_profile_size][percentage][k])
+            # Plot the line
+            plt.plot(x_values, y_values, marker='o', linestyle='-', label=f"{percentage}")
+    
+        plt.xlabel('Minimum Profile Size')
+        plt.ylabel('DCG Ratio')
+        plt.title(f'DCG Performance of Varying Sized User Profiles: K = {k}')
+        plt.legend()
+        
+        plt.ylim(0, 1)
+        
+        plt.grid(True)
+        plt.savefig(f'metrics/lamp{current_task}/UPsize_DCG_k{k}')
+        
+                    
     # Generate graph for the different plots
     # plt.figure()
     # for percentage in percentages:
@@ -179,26 +206,27 @@ def main():
     
     # plt.grid(True)
     # plt.show()
+
+    # Generate graph K x DCG ratio    
+    # k_values = set(k_val for percentages in dcg_percentage.values() for k_val in percentages.keys())
     
-    k_values = set(k_val for percentages in dcg_percentage.values() for k_val in percentages.keys())
+    # plt.figure()
     
-    plt.figure()
-    
-    for k in k_values:
-        x_values = list(dcg_percentage.keys())
-        y_values = [percentages[k] for percentages in dcg_percentage.values()]
+    # for k in k_values:
+    #     x_values = list(dcg_percentage.keys())
+    #     y_values = [percentages[k] for percentages in dcg_percentage.values()]
         
-        plt.plot(x_values, y_values, marker='o', label=f'k={k}')
+    #     plt.plot(x_values, y_values, marker='o', label=f'k={k}')
         
-    plt.xlabel('Percentage of Original Corpus')
-    plt.ylabel('DCG Ratio')
-    plt.title(f'DCG performance of Varying Sized User Profiles: Minimum Size = {min_profile_size}')
-    plt.legend()
+    # plt.xlabel('Percentage of Original Corpus')
+    # plt.ylabel('DCG Ratio')
+    # plt.title(f'DCG performance of Varying Sized User Profiles: Minimum Size = {min_profile_size}')
+    # plt.legend()
     
-    plt.ylim(0, 1)
-    plt.xlim(0, 1)
-    plt.grid(True)
-    plt.show()
+    # plt.ylim(0, 1)
+    # plt.xlim(0, 1)
+    # plt.grid(True)
+    # plt.show()
         
 
 if __name__ == '__main__':

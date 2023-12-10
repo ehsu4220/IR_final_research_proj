@@ -27,19 +27,20 @@ os.environ["PYTHONHASHSEED"] = str(SEED)
 np.random.seed(SEED)
 
 ### Operation settings
+# 0: None
 # 1: vectors
 # 2: number of clusters
 # 3: Mini-batch size
 which_hyperparam = 0
 which_task = 4
-which_set = 'train'
+which_set = 'validate'
 
-lamp2_vector_sizes = [140]
-lamp2_cluster_numbers = [10]
+lamp2_vector_sizes = [15]
+lamp2_cluster_numbers = [12]
 lamp2_cluster_sizes = [128]
 
-lamp4_vector_sizes = [220]
-lamp4_cluster_numbers = [9]
+lamp4_vector_sizes = [15]
+lamp4_cluster_numbers = [11]
 lamp4_cluster_sizes = [128]
 
 # Settings for hyperparams
@@ -143,6 +144,7 @@ def word_2_vec(path, model_path, minimum_profile_size=0):
     docs = dict()
     tokenized_docs = dict()
     inputs = dict()
+    omitted_docs = dict()
     
     for id in data:
         # print(f"{current}/{total_user_profiles}")
@@ -152,6 +154,7 @@ def word_2_vec(path, model_path, minimum_profile_size=0):
         
         # Skip user profiles with not enough documents to cluster        
         if len(user_profile) < minimum_profile_size:
+            omitted_docs[id] = data[id]
             continue
 
         # Tokenize the list of documents
@@ -179,7 +182,7 @@ def word_2_vec(path, model_path, minimum_profile_size=0):
         docs[id] = documents
         tokenized_docs[id] = tokenized_documents
         
-    return vectorized_documents_id, tokenized_docs, docs, reverse_document_id_lookup, inputs
+    return vectorized_documents_id, tokenized_docs, docs, reverse_document_id_lookup, inputs, omitted_docs
 
 def mbkmeans_clusters(
 	X, 
@@ -246,16 +249,19 @@ def mbkmeans_clusters(
 
 def main():
     
+    # Generate models
+    #generate_models("processed_data/lamp4/train/questions.json", 4)
+    
     # Initialize new corpi to save 
     reduced_corpi = {percent : dict() for percent in percentage_to_keep}
     
     # Test performance of the different models with different amounts of vectors
     for size_of_vector in vector_sizes: # settled on 80 for vector size
-    
-        print(f"Vector Size: {size_of_vector}")
-    
+        
+        print(f"Working on Vector {size_of_vector}")
+        
         # Find the document vectors for the preprocessed dataset
-        user_document_vectors, tokenized_docs, docs, reverse_lookup, inputs = word_2_vec(f"processed_data/lamp{which_task}/{which_set}/questions.json", f"models/lamp{which_task}/{size_of_vector}.bin", minimum_profile_size=100)
+        user_document_vectors, tokenized_docs, docs, reverse_lookup, inputs, omitted_docs = word_2_vec(f"processed_data/lamp{which_task}/{which_set}/questions.json", f"models/lamp{which_task}/{size_of_vector}.bin", minimum_profile_size=100)
         
         which_id = 1
         # Form the clusters based on the document vectors
@@ -303,14 +309,13 @@ def main():
                             current_user_profile.extend(user_profile_cluster)
                         
                         reduced_corpi[percentage][id] = [inputs[id], current_user_profile]
+                        reduced_corpi[percentage].update(omitted_docs) # Include the questions that had too short of a user profile
                     
-                    print('debug')
-        
-        print('debug all reduced corpi made')
         for corpus in reduced_corpi:
+            print(f"reduced_corpus length: {len(reduced_corpi[corpus])}")
             with open(f'reduced_corpus/lamp{which_task}/{which_set}/question_{corpus}.json', 'w') as file:
                 json.dump(reduced_corpi[corpus], file)
-        
+       
 
 
     # Save the results of hyperparameter tuning
