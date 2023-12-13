@@ -5,6 +5,10 @@ import evaluate
 import torch
 import transformers as tf
 import json
+import re
+import time
+import random
+import copy
 from llm_tuning import ForT5Dataset
 
 
@@ -23,11 +27,13 @@ def json_load(path):
 
 
 class LLM_Evaluator:
-    def __init__(self, lamp2_path, lamp4_path):
+    def __init__(self, lamp2_path, lamp4_path, global_debug=False):
         self.lamp2_model, self.lamp2_tokenizer, self.lamp4_model, self.lamp4_tokenizer = self.load_llms(lamp2_path,
                                                                                                         lamp4_path)
         nltk.download("punkt", quiet=True)
         self.rouge_ev = evaluate.load("rouge")
+        self.debug = global_debug
+        self.labels_path = ""
 
     @staticmethod
     def load_llms(lamp2_path, lamp4_path):
@@ -74,14 +80,22 @@ class LLM_Evaluator:
         """
         history_prefix = "This user's recent history is: "
         history_suffix = " Using this information for context only, "
+        prefix = ["Which category does this article relate to among the following categories? Just answer with the "
+                  "category name without further explanation. categories: [women, religion, politics, style & beauty, "
+                  "entertainment, culture & arts, sports, science & technology, travel, business, crime, education, "
+                  "healthy living, parents, food & drink"]
         inputs = []
         question_vec = [questions[key][0] for key in questions.keys()]
         profiles = [questions[key][1] for key in questions.keys()]
         for i in range(len(question_vec)):
             profile = profiles[i]
-            title_cats = [item['title'] + ". Category: " + item['category'] + ". " for item in profile]
-            model_input = history_prefix + "".join(title_cats[:]) + history_suffix + question_vec[i]
+            title_cats = [item['title'] + ": " + item['category'] + ". " for item in profile]
+            random.shuffle(title_cats)
+
+            model_input = history_prefix + "".join(title_cats[:20]) + history_suffix + str(prefix) + question_vec[i]
             inputs.append(model_input)
+            if len(model_input) > 512 and self.debug:
+                print(len(model_input))
 
         inputs = self.lamp2_tokenizer(inputs, max_length=512, padding=True, truncation=True, return_tensors="pt")
 
@@ -96,19 +110,44 @@ class LLM_Evaluator:
         Returns: Tokenized dataset
         """
 
-        history_prefix = "This user's recent titles were: "
-        history_suffix = ". Using this information for context only, "
-        # TODO: fix to match lamp2_preprocess
+        history_prefix = "This user's recent stemmed titles include: "
+        history_suffix = ". Using this information for context, "
+
         inputs = []
-        for question in questions:
+
+        fulltext = json_load(self.labels_path + "questions.json")
+        i = 0
+        for question in fulltext:
             profile = question['profile']
-            titles = ["title: " + item['title'] for item in profile]
-            model_input = history_prefix + ". ".join(titles[:]) + history_suffix + question['input']
+            red_ids = [doc['id'] for doc in questions[question['id']][1]]
+            full_doc_ids = {}
+            for item in profile:
+                full_doc_ids[item['id']] = item['title']
+            idx = []
+            for red_id in red_ids:
+                title = full_doc_ids[red_id]
+                idx.append(title)
+                #print(title)
+            random.shuffle(idx)
+            staged_input = history_prefix + ". ".join(idx[:10])
+            model_input = staged_input[:min(100,len(staged_input))] + history_suffix + question['input']
             inputs.append(model_input)
             if len(model_input) > 512:
                 print(len(model_input))
+            i += 1
 
-        inputs = self.lamp4_tokenizer(inputs, max_length=512, truncation=True, padding=True, return_tensors="pt")
+        # for i in range(len(questions)):
+        #     question = question_vec[i]
+        #     profile = profiles[i]
+        #     ids = [item['id'] for item in profile]
+        #
+        #     title_cats = [item['title'] for item in profile]
+        #     random.shuffle(title_cats)
+        #
+        #     model_input = history_prefix + "".join(title_cats[:20]) + history_suffix + str(prefix) + question['input']
+        #     inputs.append(model_input)
+
+        inputs = self.lamp4_tokenizer(inputs, max_length=512, truncation=False, padding=True, return_tensors="pt")
 
         return inputs
 
@@ -123,10 +162,30 @@ class LLM_Evaluator:
             'acc': total accuracy}
         """
 
-        pred_outputs = self.lamp2_model.generate(**inputs)
+        pred_outputs = self.lamp2_model.generate(**inputs, max_new_tokens=10)
         answer = map(self.lamp2_tokenizer.decode, pred_outputs)
-        mean_rouge = self.rouge(answer, outputs)
-        acc = np.mean(answer == outputs)
+        # l_answer = list(answer)
+        # if len(l_answer) == 0:
+        #     print(answer, l_answer)
+
+        pred_outputs = []
+        total = 0
+        correct = 0
+        for item in answer:
+            answer = re.sub("<pad> *([a-zA-Z]*[ &]*[a-zA-Z]*)\\.*.*", "\\1", item)
+            pred_outputs.append(answer)
+
+            if len(answer) != 0 and self.debug:
+                print(answer)
+
+            if answer.lower() == outputs[total]:
+                correct += 1
+
+            total += 1
+
+        mean_rouge = self.rouge(pred_outputs, outputs)
+
+        acc = correct / total
 
         return {'rouge': mean_rouge, 'acc': acc}
 
@@ -141,9 +200,19 @@ class LLM_Evaluator:
             'acc': total accuracy}
         """
         pred_outputs = self.lamp4_model.generate(**inputs)
-        answer = pred_outputs.map(self.lamp4_tokenizer.decode(), batched=True)
-        mean_rouge = self.rouge(answer, outputs)
-        acc = np.mean(answer == outputs)
+        answer = map(self.lamp4_tokenizer.decode, pred_outputs)
+        answers = []
+        total, correct = 0,0
+        for item in answer:
+            answer = re.sub("<pad> *([a-zA-Z& ])\\.*.*", "\\1", item)
+            answers.append(answer)
+            if answer.lower() == outputs[total]:
+                correct += 1
+            total += 1
+
+
+        mean_rouge = self.rouge(answers, outputs)
+        acc = correct/total
 
         return {'rouge': mean_rouge, 'acc': acc}
 
@@ -171,7 +240,7 @@ class LLM_Evaluator:
             eval_fn = self.lamp4_eval
         else:
             raise ValueError("%s is not a valid model task, must be one of 'class' or 'summ'" % task)
-
+        self.labels_path = labels_path
         # load array of the reduced corpus questions
         datasets = []
         print("Loading data at file path %s..." % corpus_path)
@@ -182,15 +251,21 @@ class LLM_Evaluator:
 
         print("Data loading complete.")
         # Preprocessing the labels
-        raw_labels = json_load(labels_path)['golds']
+        raw_labels = json_load(labels_path + "outputs.json")['golds']
+
         labels = [output['output'] for output in raw_labels]
         print(len(labels))
         print("Preprocessing...")
-        processed_datasets = map(preprocess_fn, datasets)
+        processed_datasets = list(map(preprocess_fn, datasets))
         print("Preprocessing complete.\nEvaluating...")
-        metrics = map(eval_fn, processed_datasets, [labels] * 9)
+        metrics = []
 
         for i in range(9):
-            print(list(metrics)[i])
+            start = time.time()
+            out = eval_fn(processed_datasets[i], labels)
+            diff = time.time() - start
+            print(out)
+            print("Fold %d of 9 processed in %.2f seconds." % (i, diff))
+            metrics.append(out)
 
         return
